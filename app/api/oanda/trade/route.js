@@ -1,6 +1,8 @@
 // pages/api/trade.js
 import { oandaGet, oandaPost, ACCOUNT_ID } from "../../../lib/oanda";
 import { NextResponse } from "next/server";
+import { NYSessionStrategy } from "../../../lib/strategies/nySessionStrategy";
+import { TRADING_PARAMS } from "../../../config/instruments";
 
 export async function POST(request) {
   try {
@@ -18,9 +20,20 @@ export async function POST(request) {
       );
     }
 
+    // Initialize NY Session Strategy
+    const nyStrategy = new NYSessionStrategy();
+
+    // Check if we're in NY session
+    if (!nyStrategy.isNYSession()) {
+      return NextResponse.json({
+        status: "no_session",
+        message: "Outside of New York trading session hours",
+      });
+    }
+
     // 1. Fetch historical candles for analysis
     const candlesRes = await oandaGet(
-      `/v3/instruments/${instrument}/candles?count=40&granularity=M1`
+      `/v3/instruments/${instrument}/candles?count=400&granularity=M1`
     );
 
     // Filter and process candle data
@@ -38,36 +51,39 @@ export async function POST(request) {
       );
     }
 
-    // 2. Compute moving averages
-    const sma = (data, period) => {
-      const slice = data.slice(-period);
-      return slice.reduce((sum, val) => sum + val, 0) / period;
-    };
+    // Calculate indicators using NY Session Strategy
+    const indicators = nyStrategy.calculateIndicators(prices);
+    const curr = prices.length - 1;
 
-    const maShort = sma(prices, 10);
-    const maLong = sma(prices, 30);
+    // Check for trade signals
+    let tradeDirection = null;
+    let tradeParams = null;
 
-    // 3. Determine trade direction
-    let units = 0;
-    let tradeType = "NONE";
-
-    if (maShort > maLong) {
-      units = unitsSize;
-      tradeType = "BUY";
-    } else if (maShort < maLong) {
-      units = -unitsSize;
-      tradeType = "SELL";
+    if (nyStrategy.shouldEnterLong(indicators, curr)) {
+      tradeDirection = "BUY";
+      tradeParams = nyStrategy.getTradeParameters(prices[curr], "long", indicators.atr);
+    } else if (nyStrategy.shouldEnterShort(indicators, curr)) {
+      tradeDirection = "SELL";
+      tradeParams = nyStrategy.getTradeParameters(prices[curr], "short", indicators.atr);
     }
 
-    // 4. Execute trade if there's a signal
-    if (units !== 0) {
+    // Execute trade if there's a signal
+    if (tradeDirection) {
       const order = {
         order: {
-          units: units.toString(),
+          units: tradeDirection === "BUY" ? unitsSize.toString() : (-unitsSize).toString(),
           instrument: instrument,
           timeInForce: "FOK",
           type: "MARKET",
           positionFill: "DEFAULT",
+          stopLossOnFill: {
+            price: tradeParams.stopLoss.toFixed(5),
+            timeInForce: "GTC",
+          },
+          takeProfitOnFill: {
+            price: tradeParams.takeProfit.toFixed(5),
+            timeInForce: "GTC",
+          },
         },
       };
 
@@ -78,12 +94,14 @@ export async function POST(request) {
 
       return NextResponse.json({
         status: "success",
-        tradeType,
+        tradeType: tradeDirection,
         order: tradeResponse.orderCreateTransaction,
         analysis: {
-          shortMA: maShort,
-          longMA: maLong,
-          lastPrice: prices[prices.length - 1],
+          entryPrice: prices[curr],
+          stopLoss: tradeParams.stopLoss,
+          takeProfit: tradeParams.takeProfit,
+          rsi: indicators.rsi[curr],
+          adx: indicators.adx[curr],
         },
       });
     }
@@ -92,9 +110,9 @@ export async function POST(request) {
     return NextResponse.json({
       status: "no_signal",
       analysis: {
-        shortMA: maShort,
-        longMA: maLong,
-        lastPrice: prices[prices.length - 1],
+        lastPrice: prices[curr],
+        rsi: indicators.rsi[curr],
+        adx: indicators.adx[curr],
       },
     });
   } catch (error) {

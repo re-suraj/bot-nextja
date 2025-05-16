@@ -1,6 +1,7 @@
 import { SMA, RSI, MACD, BollingerBands } from "technicalindicators";
 import { OANDA_API_KEY, OANDA_ACCOUNT_ID, OANDA_API_URL } from "../config/env";
 import { INSTRUMENTS, TRADING_PARAMS } from "../config/instruments";
+import { NYSessionStrategy } from "./strategies/nySessionStrategy";
 
 const {
   STOP_LOSS_PIPS,
@@ -111,7 +112,7 @@ async function getOpenTrades() {
   }
 }
 
-async function createOrder(direction, price, units, instrument) {
+async function createOrder(direction, price, units, instrument, tradeParams) {
   try {
     const tpPips = pipToPrice(TAKE_PROFIT_PIPS);
     const slPips = pipToPrice(STOP_LOSS_PIPS);
@@ -157,7 +158,7 @@ async function createOrder(direction, price, units, instrument) {
     console.error(
       `[ERROR] Order failed for ${instrument}. Retrying... (${errorNumber})`
     );
-    setTimeout(() => createOrder(direction, price, units, instrument), timeout);
+    setTimeout(() => createOrder(direction, price, units, instrument, tradeParams), timeout);
     throw error;
   }
 }
@@ -169,6 +170,9 @@ async function calculateUnits(balance) {
   const units = riskPerTrade / stopLoss;
   return Math.min(units, 80000); // Cap at 80000 units
 }
+
+// Initialize NY Session Strategy
+const nyStrategy = new NYSessionStrategy();
 
 // === Strategy ===
 async function runStrategy(instrument) {
@@ -217,97 +221,46 @@ async function runStrategy(instrument) {
       return;
     }
 
-    // Calculate indicators
-    const shortMA = SMA.calculate({ period: 5, values: prices });
-    const longMA = SMA.calculate({ period: 20, values: prices });
-    const rsi = RSI.calculate({ period: 14, values: prices });
-    const macd = MACD.calculate({
-      fastPeriod: 12,
-      slowPeriod: 26,
-      signalPeriod: 9,
-      values: prices,
-    });
-    const bb = BollingerBands.calculate({
-      period: 20,
-      values: prices,
-      stdDev: 2,
-    });
-
-    // Validate indicator calculations
-    if (
-      !shortMA.length ||
-      !longMA.length ||
-      !rsi.length ||
-      !macd.length ||
-      !bb.length
-    ) {
-      window.addMarketLog(
-        `[ERROR] Invalid indicator calculations for ${instrument}`,
-        "error"
-      );
-      return;
-    }
-
+    // Calculate indicators using NY Session Strategy
+    const indicators = nyStrategy.calculateIndicators(prices);
     const curr = prices.length - 1;
-    const prev = curr - 1;
 
-    // Calculate trend strength
-    const trendStrength = Math.abs(shortMA[curr] - longMA[curr]);
-    const rsiDiff = Math.abs(rsi[curr] - rsi[prev]);
-    const maDiff = Math.abs(shortMA[curr] - longMA[curr]);
-
-    // Enhanced buy signal
-    if (
-      shortMA[curr] > longMA[curr] && // MA crossover
-      rsi[curr] < 30 && // Oversold
-      rsiDiff > MIN_RSI_DIFF && // RSI momentum
-      maDiff > MIN_MA_DIFF && // Strong MA crossover
-      trendStrength > TREND_STRENGTH_THRESHOLD && // Trend confirmation
-      macd[curr].MACD > macd[curr].signal && // MACD crossover
-      prices[curr] < bb[curr].lower
-    ) {
-      // Price below lower BB
-
+    // Check for long entry
+    if (nyStrategy.shouldEnterLong(indicators, curr)) {
+      const entryPrice = prices[curr];
+      const tradeParams = nyStrategy.getTradeParameters(entryPrice, "long", indicators.atr);
+      
       window.addMarketLog(
-        `[BUY] ${instrument} - Price: ${prices[curr].toFixed(5)} | RSI: ${rsi[
-          curr
-        ].toFixed(2)} | MACD: ${macd[curr].MACD.toFixed(5)} | BB: ${bb[
-          curr
-        ].lower.toFixed(5)}`
+        `[BUY] ${instrument} - Price: ${entryPrice.toFixed(5)} | RSI: ${indicators.rsi[curr].toFixed(2)} | ADX: ${indicators.adx[curr].toFixed(2)}`
       );
 
       const balance = await getAccountDetails();
       const units = await calculateUnits(balance);
       if (units > 0) {
-        await createOrder("buy", prices[curr], units, instrument);
+        await createOrder("buy", entryPrice, units, instrument, {
+          stopLoss: tradeParams.stopLoss,
+          takeProfit: tradeParams.takeProfit
+        });
         dailyStats.trades++;
       }
     }
 
-    // Enhanced sell signal
-    if (
-      shortMA[curr] < longMA[curr] && // MA crossover
-      rsi[curr] > 70 && // Overbought
-      rsiDiff > MIN_RSI_DIFF && // RSI momentum
-      maDiff > MIN_MA_DIFF && // Strong MA crossover
-      trendStrength > TREND_STRENGTH_THRESHOLD && // Trend confirmation
-      macd[curr].MACD < macd[curr].signal && // MACD crossover
-      prices[curr] > bb[curr].upper
-    ) {
-      // Price above upper BB
-
+    // Check for short entry
+    if (nyStrategy.shouldEnterShort(indicators, curr)) {
+      const entryPrice = prices[curr];
+      const tradeParams = nyStrategy.getTradeParameters(entryPrice, "short", indicators.atr);
+      
       window.addMarketLog(
-        `[SELL] ${instrument} - Price: ${prices[curr].toFixed(5)} | RSI: ${rsi[
-          curr
-        ].toFixed(2)} | MACD: ${macd[curr].MACD.toFixed(5)} | BB: ${bb[
-          curr
-        ].upper.toFixed(5)}`
+        `[SELL] ${instrument} - Price: ${entryPrice.toFixed(5)} | RSI: ${indicators.rsi[curr].toFixed(2)} | ADX: ${indicators.adx[curr].toFixed(2)}`
       );
 
       const balance = await getAccountDetails();
       const units = await calculateUnits(balance);
       if (units > 0) {
-        await createOrder("sell", prices[curr], units, instrument);
+        await createOrder("sell", entryPrice, units, instrument, {
+          stopLoss: tradeParams.stopLoss,
+          takeProfit: tradeParams.takeProfit
+        });
         dailyStats.trades++;
       }
     }
@@ -376,22 +329,74 @@ async function checkAndCloseProfitableTrades() {
       const value = entry * units;
       const profitPct = (pl / value) * 100;
 
-      // Dynamic profit taking based on market conditions
-      const profitTarget = dailyStats.wins > dailyStats.losses ? 0.015 : 0.02;
-      const stopLoss = -0.01; // Tighter stop loss
+      // Get current market conditions
+      const candles = await getCandles(trade.instrument);
+      const indicators = nyStrategy.calculateIndicators(candles);
+      const curr = candles.length - 1;
+      const atr = indicators.atr[curr];
+      const adx = indicators.adx[curr];
 
+      // Dynamic profit targets based on market conditions
+      let profitTarget, stopLoss;
+      
+      if (adx > 30) { // Strong trend
+        profitTarget = 0.03; // 3% target in strong trends
+        stopLoss = -0.01; // Tighter stop in strong trends
+      } else if (adx > 20) { // Moderate trend
+        profitTarget = 0.02; // 2% target in moderate trends
+        stopLoss = -0.015; // Standard stop
+      } else { // Weak trend
+        profitTarget = 0.015; // 1.5% target in weak trends
+        stopLoss = -0.02; // Wider stop in weak trends
+      }
+
+      // Trailing stop logic
+      const trailingStopDistance = atr * 1.5; // 1.5x ATR for trailing stop
+      const isLong = Number(trade.currentUnits) > 0;
+      
+      // Calculate trailing stop level
+      const trailingStopLevel = isLong 
+        ? current - trailingStopDistance
+        : current + trailingStopDistance;
+
+      // Check if we should move stop loss to break even
+      const breakEvenThreshold = profitTarget * 0.5; // Move to break even at 50% of target
+      if (profitPct >= breakEvenThreshold && profitPct < profitTarget) {
+        // Move stop loss to break even
+        const newStopLoss = entry;
+        await updateStopLoss(trade.id, newStopLoss);
+        window.addMarketLog(
+          `🔄 ${trade.instrument} Moved stop loss to break even at ${newStopLoss.toFixed(5)}`
+        );
+      }
+
+      // Check if we should trail the stop
+      if (profitPct >= profitTarget * 0.7) { // Start trailing at 70% of target
+        const currentStop = Number(trade.stopLossOrder?.price || 0);
+        if (isLong && trailingStopLevel > currentStop) {
+          await updateStopLoss(trade.id, trailingStopLevel);
+          window.addMarketLog(
+            `🔄 ${trade.instrument} Trailing stop updated to ${trailingStopLevel.toFixed(5)}`
+          );
+        } else if (!isLong && trailingStopLevel < currentStop) {
+          await updateStopLoss(trade.id, trailingStopLevel);
+          window.addMarketLog(
+            `🔄 ${trade.instrument} Trailing stop updated to ${trailingStopLevel.toFixed(5)}`
+          );
+        }
+      }
+
+      // Take profit or stop loss
       if (profitPct >= profitTarget) {
         window.addMarketLog(
-          `✅ ${trade.instrument} Profit ${profitPct.toFixed(
-            4
-          )}% — Closing trade ${trade.id}`
+          `✅ ${trade.instrument} Profit ${profitPct.toFixed(4)}% — Closing trade ${trade.id}`
         );
         await closeTrade(trade.id);
         dailyStats.wins++;
         dailyStats.profit += pl;
       } else if (profitPct <= stopLoss) {
         window.addMarketLog(
-          `⏳ ${trade.instrument} Profit ${profitPct.toFixed(4)}% — Waiting...`
+          `❌ ${trade.instrument} Loss ${profitPct.toFixed(4)}% — Closing trade ${trade.id}`
         );
         await closeTrade(trade.id);
         dailyStats.losses++;
@@ -403,6 +408,32 @@ async function checkAndCloseProfitableTrades() {
       `[ERROR] Error checking profitable trades: ${error.message}`,
       "error"
     );
+  }
+}
+
+// Add new function to update stop loss
+async function updateStopLoss(tradeId, newStopLoss) {
+  try {
+    const response = await fetch(
+      `${OANDA_API_URL}/accounts/${OANDA_ACCOUNT_ID}/trades/${tradeId}/orders`,
+      {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          stopLoss: {
+            price: newStopLoss.toFixed(5),
+            timeInForce: "GTC"
+          }
+        })
+      }
+    );
+    return await response.json();
+  } catch (error) {
+    window.addMarketLog(
+      `[ERROR] Failed to update stop loss: ${error.message}`,
+      "error"
+    );
+    throw error;
   }
 }
 

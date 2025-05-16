@@ -1,520 +1,351 @@
-import { useState, useEffect, useCallback } from "react";
-import { useOanda } from "../lib/hooks/useOanda";
-import {
-  startBot,
-  stopBot,
-  getBotState,
-  getBotConfig,
-  updateStrategyConfig,
-  executeTrade,
-  closePosition,
-  monitorPositions,
-  analyzeMarket,
-} from "../lib/botState";
-import { backtester } from "../lib/backtest";
-import TradingTerminal from "./TradingTerminal";
-import BacktestResults from "./BacktestResults";
-import { INSTRUMENTS } from '../config/instruments';
+"use client";
+
+import { useState, useEffect, useRef, useCallback } from "react";
+import { INSTRUMENTS } from "../config/instruments";
 
 export default function TradingBot() {
   const [isRunning, setIsRunning] = useState(false);
-  const [config, setConfig] = useState(null);
-  const [positions, setPositions] = useState([]);
+  const [botState, setBotState] = useState(null);
   const [error, setError] = useState(null);
-  const [backtestResults, setBacktestResults] = useState(null);
-  const [isBacktesting, setIsBacktesting] = useState(false);
-  const { getCandles, loading, error: oandaError } = useOanda();
+  const [logs, setLogs] = useState([]);
+  const [connectionError, setConnectionError] = useState(false);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const logContainerRef = useRef(null);
+  const eventSourceRef = useRef(null);
+  const isUserScrollingRef = useRef(false);
 
-  // Initialize bot configuration
-  useEffect(() => {
-    const initialConfig = getBotConfig();
-    setConfig(initialConfig);
+  const scrollToBottom = useCallback(() => {
+    if (
+      shouldAutoScroll &&
+      logContainerRef.current &&
+      !isUserScrollingRef.current
+    ) {
+      const container = logContainerRef.current;
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [shouldAutoScroll]);
+
+  const handleScroll = useCallback(() => {
+    if (!logContainerRef.current) return;
+    const container = logContainerRef.current;
+    const isAtBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight <
+      50;
+    setShouldAutoScroll(isAtBottom);
+    isUserScrollingRef.current = !isAtBottom;
   }, []);
 
-  // Separate effect for position monitoring with rate limiting
+  const updateLogs = useCallback(
+    (newLog) => {
+      setLogs((prev) => {
+        const newLogs = [...prev, newLog].slice(-100);
+        setTimeout(scrollToBottom, 0);
+        return newLogs;
+      });
+    },
+    [scrollToBottom]
+  );
+
   useEffect(() => {
-    if (!isRunning) return;
+    if (shouldAutoScroll && !isUserScrollingRef.current) scrollToBottom();
+  }, [logs, scrollToBottom, shouldAutoScroll]);
 
-    let positionUpdateTimeout;
-    const POSITION_UPDATE_INTERVAL = 10000; // 10 seconds
-
-    const updatePositions = async () => {
-      try {
-        const { positions: currentPositions } = await monitorPositions();
-        setPositions(currentPositions);
-      } catch (error) {
-        console.error("Error monitoring positions:", error);
-        if (error.message.includes("429")) {
-          console.warn("Rate limit hit, backing off position updates");
-          // Double the interval if we hit rate limit
-          positionUpdateTimeout = setTimeout(
-            updatePositions,
-            POSITION_UPDATE_INTERVAL * 2
-          );
-          return;
-        }
-        setError(error.message);
-      }
-      // Schedule next update
-      positionUpdateTimeout = setTimeout(
-        updatePositions,
-        POSITION_UPDATE_INTERVAL
-      );
-    };
-
-    // Initial position update
-    updatePositions();
+  useEffect(() => {
+    fetchBotState();
+    const interval = setInterval(fetchBotState, 5000);
+    setupEventSource();
 
     return () => {
-      if (positionUpdateTimeout) {
-        clearTimeout(positionUpdateTimeout);
-      }
+      clearInterval(interval);
+      if (eventSourceRef.current) eventSourceRef.current.close();
     };
-  }, [isRunning]);
+  }, []);
 
-  // Separate effect for market monitoring
-  useEffect(() => {
-    if (!isRunning) return;
+  const setupEventSource = () => {
+    if (eventSourceRef.current) eventSourceRef.current.close();
 
-    let marketUpdateTimeout;
-    const MARKET_UPDATE_INTERVAL = 5000; // 5 seconds
+    eventSourceRef.current = new EventSource("/api/bot/logs");
 
-    const monitorMarket = async () => {
-      try {
-        let hasValidPrices = false;
-        let failedInstruments = [];
+    eventSourceRef.current.onopen = () => {
+      setConnectionError(false);
+      updateLogs({
+        timestamp: new Date().toLocaleTimeString(),
+        message: "Connected to log stream",
+        type: "success",
+      });
+    };
 
-        window.addMarketLog("=== Starting Market Analysis ===");
-        window.addMarketLog(
-          "Enabled Strategies: " +
-            Object.entries(config.strategies)
-              .filter(([_, strategy]) => strategy.enabled)
-              .map(([id, strategy]) => `${id}: ${strategy.name}`)
-              .join(", ")
-        );
+    eventSourceRef.current.onmessage = (event) => {
+      const log = JSON.parse(event.data);
+      updateLogs(log);
+    };
 
-        for (const instrument of INSTRUMENTS) {
-          try {
-            const candles = await getCandles(instrument, "M5", 100);
+    eventSourceRef.current.onerror = (error) => {
+      console.error("SSE Error:", error);
+      setConnectionError(true);
+      updateLogs({
+        timestamp: new Date().toLocaleTimeString(),
+        message: "Lost connection. Reconnecting...",
+        type: "error",
+      });
+      eventSourceRef.current.close();
+      setTimeout(setupEventSource, 5000);
+    };
+  };
 
-            if (!candles) {
-              failedInstruments.push(instrument);
-              continue;
-            }
+  const addLog = (message, type = "info") => {
+    updateLogs({ timestamp: new Date().toLocaleTimeString(), message, type });
+  };
 
-            hasValidPrices = true;
-            window.addMarketLog(
-              `Successfully fetched ${candles.length} candles for ${instrument}`
-            );
-            window.addMarketLog(
-              `Latest price: ${candles[candles.length - 1].mid.c}`
-            );
+  const fetchBotState = async () => {
+    try {
+      const response = await fetch("/api/bot/control");
+      if (!response.ok) throw new Error("Failed to fetch bot state");
+      const data = await response.json();
+      setBotState(data);
+      setIsRunning(data.status === "running");
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+      addLog(`Error fetching bot state: ${err.message}`, "error");
+    }
+  };
 
-            const { signals } = await analyzeMarket(candles, instrument);
-            if (signals) {
-              for (const [strategyId, signal] of Object.entries(signals)) {
-                if (signal && signal.direction) {
-                  window.addMarketLog(`\nTrade Signal Detected:`);
-                  window.addMarketLog(`Strategy: ${strategyId}`);
-                  window.addMarketLog(`Instrument: ${instrument}`);
-                  window.addMarketLog(`Direction: ${signal.direction}`);
-                  window.addMarketLog(`Strength: ${signal.strength}`);
+  const handleToggleBot = async () => {
+    try {
+      const action = isRunning ? "stop" : "start";
+      const response = await fetch("/api/bot/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (!response.ok) throw new Error("Failed to control bot");
+      const data = await response.json();
+      setIsRunning(data.status === "running");
+      setError(null);
+      addLog(
+        `Bot ${action}ed successfully`,
+        data.status === "running" ? "success" : "warning"
+      );
+    } catch (err) {
+      setError(err.message);
+      addLog(`Error controlling bot: ${err.message}`, "error");
+    }
+  };
 
-                  try {
-                    const tradeResult = await executeTrade(
-                      strategyId,
-                      instrument,
-                      signal.direction,
-                      1000
-                    );
-                    window.addMarketLog(
-                      `Trade executed successfully: ${JSON.stringify(
-                        tradeResult
-                      )}`
-                    );
-                  } catch (tradeError) {
-                    window.addMarketLog(
-                      `Failed to execute trade: ${tradeError.message}`,
-                      "error"
-                    );
-                  }
-                }
+  const getLogColor = (type) => {
+    return (
+      {
+        success: "text-green-400",
+        error: "text-red-400",
+        warning: "text-yellow-400",
+        info: "text-gray-300",
+      }[type] || "text-gray-300"
+    );
+  };
+
+  const TerminalSection = () => (
+    <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-xl font-bold text-white">Terminal Logs</h3>
+        <div className="flex gap-2">
+          {connectionError && (
+            <button
+              onClick={setupEventSource}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded"
+            >
+              Reconnect
+            </button>
+          )}
+          <button
+            onClick={() => setLogs([])}
+            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+          >
+            🧹 Clear
+          </button>
+          <button
+            onClick={() => {
+              setShouldAutoScroll(!shouldAutoScroll);
+              if (!shouldAutoScroll) {
+                isUserScrollingRef.current = false;
+                scrollToBottom();
               }
-            }
-          } catch (error) {
-            if (error.message.includes("429")) {
-              window.addMarketLog(
-                "Rate limit hit, backing off market updates",
-                "error"
-              );
-              marketUpdateTimeout = setTimeout(
-                monitorMarket,
-                MARKET_UPDATE_INTERVAL * 2
-              );
-              return;
-            }
-            failedInstruments.push(instrument);
-            continue;
-          }
-        }
-
-        if (!hasValidPrices) {
-          const errorMessage = `No valid price data available. Failed instruments: ${failedInstruments.join(
-            ", "
-          )}`;
-          setError(errorMessage);
-        }
-
-        window.addMarketLog("\n=== Market Analysis Complete ===");
-        marketUpdateTimeout = setTimeout(monitorMarket, MARKET_UPDATE_INTERVAL);
-      } catch (error) {
-        console.error("Market monitoring error:", error);
-        if (error.message.includes("429")) {
-          window.addMarketLog(
-            "Rate limit hit, backing off market updates",
-            "error"
-          );
-          marketUpdateTimeout = setTimeout(
-            monitorMarket,
-            MARKET_UPDATE_INTERVAL * 2
-          );
-          return;
-        }
-        setError(error.message);
-      }
-    };
-
-    // Initial market update
-    monitorMarket();
-
-    return () => {
-      if (marketUpdateTimeout) {
-        clearTimeout(marketUpdateTimeout);
-      }
-    };
-  }, [isRunning, getCandles, config]);
-
-  const handleStartBot = async () => {
-    try {
-      setError(null);
-      const newState = startBot();
-      setIsRunning(true);
-      console.log("Bot started:", newState);
-    } catch (error) {
-      console.error("Error starting bot:", error);
-      setError(error.message);
-    }
-  };
-
-  const handleStopBot = async () => {
-    try {
-      setError(null);
-      const newState = stopBot();
-      setIsRunning(false);
-      console.log("Bot stopped:", newState);
-    } catch (error) {
-      console.error("Error stopping bot:", error);
-      setError(error.message);
-    }
-  };
-
-  const handleStartBacktest = async () => {
-    try {
-      setError(null);
-      setIsBacktesting(true);
-
-      // Check if any strategies are enabled
-      const enabledStrategies = Object.entries(config.strategies)
-        .filter(([_, strategy]) => strategy.enabled)
-        .map(([id]) => id);
-
-      if (enabledStrategies.length === 0) {
-        throw new Error(
-          "Please enable at least one strategy before running backtest"
-        );
-      }
-
-      // Calculate dates for historical data
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30); // Last 30 days
-
-      // Format dates for OANDA API
-      const formatDate = (date) => {
-        return date.toISOString().split(".")[0] + "Z";
-      };
-
-      // Get instruments for enabled strategies
-      const instruments = [
-        // Core majors
-        // "EUR_USD",
-        // "GBP_USD",
-        "USD_JPY",
-        // "AUD_USD",
-        // Extras
-        "USD_CAD",
-        "USD_CHF",
-        "NZD_USD", // Other majors
-        "EUR_GBP",
-        "EUR_JPY",
-        "GBP_JPY", // Popular crosses
-        "AUD_JPY",
-        // "EUR_AUD",
-        "GBP_AUD", // AUD crosses
-        "USD_SGD",
-        "USD_HKD",
-        "USD_MXN",
-      ];
-
-      // Reset backtester state
-      backtester.balance = 10000;
-      backtester.positions.clear();
-
-      const results = await backtester.runBacktest(
-        instruments,
-        formatDate(startDate),
-        formatDate(endDate)
-      );
-
-      if (!results || !results.trades || results.trades.length === 0) {
-        throw new Error("No trades were executed during the backtest period");
-      }
-
-      setBacktestResults(results);
-    } catch (error) {
-      console.error("Error running backtest:", error);
-      setError(error.message);
-      setBacktestResults(null);
-    } finally {
-      setIsBacktesting(false);
-    }
-  };
-
-  const handleUpdateConfig = async (strategyId, updates) => {
-    try {
-      setError(null);
-      console.log("Updating strategy config:", { strategyId, updates });
-
-      // Validate strategy name
-      if (updates.name && typeof updates.name === "string") {
-        updates.name = updates.name.trim();
-        if (!updates.name) {
-          throw new Error("Strategy name cannot be empty");
-        }
-      }
-
-      const newConfig = updateStrategyConfig(strategyId, updates);
-      setConfig(newConfig);
-      console.log("Strategy config updated:", newConfig.strategies[strategyId]);
-    } catch (error) {
-      console.error("Error updating strategy config:", error);
-      setError(error.message);
-    }
-  };
-
-  const handleClosePosition = async (positionId) => {
-    try {
-      setError(null);
-      await closePosition(positionId);
-      const { positions: currentPositions } = await monitorPositions();
-      setPositions(currentPositions);
-    } catch (error) {
-      console.error("Error closing position:", error);
-      setError(error.message);
-    }
-  };
-
-  if (!config) {
-    return <div>Loading...</div>;
-  }
-
-  return (
-    <div className="p-4">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold mb-4 text-white">Trading Bot</h2>
-        <div className="flex gap-4">
-          <button
-            onClick={handleStartBot}
-            disabled={isRunning}
-            className="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50 hover:bg-green-700 transition-colors shadow-sm"
+            }}
+            className={`px-3 py-1.5 rounded ${
+              shouldAutoScroll
+                ? "bg-green-600 hover:bg-green-700 text-white"
+                : "bg-gray-700 hover:bg-gray-600 text-gray-300"
+            }`}
           >
-            Start Bot
-          </button>
-          <button
-            onClick={handleStopBot}
-            disabled={!isRunning}
-            className="px-4 py-2 bg-red-600 text-white rounded disabled:opacity-50 hover:bg-red-700 transition-colors shadow-sm"
-          >
-            Stop Bot
-          </button>
-          <button
-            onClick={handleStartBacktest}
-            disabled={isBacktesting}
-            className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50 hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            {isBacktesting ? "Running Backtest..." : "Run Backtest"}
+            {shouldAutoScroll ? "Auto-scroll: On" : "Auto-scroll: Off"}
           </button>
         </div>
       </div>
+      <div
+        ref={logContainerRef}
+        onScroll={handleScroll}
+        className="bg-black rounded-lg p-4 h-[300px] overflow-y-auto font-mono text-sm"
+        aria-live="polite"
+      >
+        <div className="sticky top-0 z-10 bg-black bg-opacity-70 backdrop-blur px-3 py-2 text-xs text-gray-400 border-b border-gray-700 font-semibold">
+          {logs.length} Messages
+        </div>
+        <div className="mt-2">
+          {logs.length === 0 ? (
+            <div className="text-gray-500 italic">No logs available</div>
+          ) : (
+            logs.map((log, index) => (
+              <div key={index} className="mb-1 flex gap-2">
+                <span className="text-gray-500 w-[90px] shrink-0">
+                  [{log.timestamp}]
+                </span>
+                <span className={getLogColor(log.type)}>{log.message}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-gray-900 min-h-screen">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-white">Trading Bot</h2>
+        <button
+          onClick={handleToggleBot}
+          className={`px-6 py-2 rounded-lg font-semibold transition ${
+            isRunning
+              ? "bg-red-600 hover:bg-red-700"
+              : "bg-green-600 hover:bg-green-700"
+          } text-white`}
+        >
+          {isRunning ? "Stop Bot" : "Start Bot"}
+        </button>
+      </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-900/50 text-red-200 rounded border border-red-800 shadow-sm">
+        <div className="bg-red-900/50 border border-red-800 text-red-200 px-4 py-3 rounded mb-6">
           {error}
         </div>
       )}
 
-      <div className="mb-6">
-        <h3 className="text-xl font-bold mb-4 text-white">Trading Terminal</h3>
-        <div className="bg-gray-800 border border-gray-700 rounded shadow-sm">
-          <TradingTerminal
-            positions={positions}
-            isRunning={isRunning}
-            error={error}
-          />
-        </div>
-      </div>
-
-      <div className="mb-6">
-        <h3 className="text-xl font-bold mb-4 text-white">Strategies</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Object.entries(config.strategies).map(([id, strategy]) => (
-            <div
-              key={id}
-              className="p-4 border border-gray-700 rounded bg-gray-800 shadow-sm"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-bold text-white">{strategy.name}</h4>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={strategy.enabled}
-                    onChange={(e) =>
-                      handleUpdateConfig(id, { enabled: e.target.checked })
-                    }
-                    className="mr-2 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-gray-300">Enabled</span>
-                </label>
-              </div>
-              <div className="space-y-3">
-                {Object.entries(strategy.parameters).map(([param, value]) => (
-                  <div key={param} className="flex items-center">
-                    <label className="w-32 text-gray-300">{param}:</label>
-                    <input
-                      type={typeof value === "number" ? "number" : "text"}
-                      value={value}
-                      onChange={(e) =>
-                        handleUpdateConfig(id, {
-                          parameters: {
-                            ...strategy.parameters,
-                            [param]:
-                              typeof value === "number"
-                                ? parseFloat(e.target.value)
-                                : e.target.value,
-                          },
-                        })
-                      }
-                      className="flex-1 border border-gray-600 rounded px-3 py-1.5 bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
+      {botState && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-xl font-bold mb-4 text-white">Bot Status</h3>
+            <div className="space-y-3">
+              {["status", "dailyStats"].every(
+                (k) => botState[k] !== undefined
+              ) && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Status:</span>
+                    <span
+                      className={`font-semibold ${
+                        botState.status === "running"
+                          ? "text-green-400"
+                          : "text-red-400"
+                      }`}
+                    >
+                      {botState.status}
+                    </span>
                   </div>
-                ))}
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Daily Trades:</span>
+                    <span className="text-white">
+                      {botState.dailyStats.trades}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Wins:</span>
+                    <span className="text-green-400">
+                      {botState.dailyStats.wins}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Losses:</span>
+                    <span className="text-red-400">
+                      {botState.dailyStats.losses}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Profit:</span>
+                    <span
+                      className={`font-semibold ${
+                        botState.dailyStats.profit >= 0
+                          ? "text-green-400"
+                          : "text-red-400"
+                      }`}
+                    >
+                      {botState.dailyStats.profit.toFixed(2)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-xl font-bold mb-4 text-white">Configuration</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Stop Loss:</span>
+                <span className="text-white">
+                  {botState.config.stopLossPips} pips
+                </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Take Profit:</span>
+                <span className="text-white">
+                  {botState.config.takeProfitPips} pips
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Risk:</span>
+                <span className="text-white">
+                  {botState.config.riskPercent}%
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Max Daily Trades:</span>
+                <span className="text-white">
+                  {botState.config.maxDailyTrades}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Max Open Positions:</span>
+                <span className="text-white">
+                  {botState.config.maxOpenPositions}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700 mb-8">
+        <h3 className="text-xl font-bold mb-4 text-white">
+          Trading Instruments
+        </h3>
+        <div
+          className="grid gap-4"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          }}
+        >
+          {INSTRUMENTS.map((instrument) => (
+            <div
+              key={instrument}
+              className="bg-gray-700 p-3 rounded text-center text-gray-200 hover:bg-gray-600 transition"
+            >
+              {instrument}
             </div>
           ))}
         </div>
       </div>
 
-      {backtestResults && (
-        <div className="mt-8">
-          <BacktestResults results={backtestResults} />
-        </div>
-      )}
-
-      <div className="mb-6">
-        <h3 className="text-xl font-bold mb-4 text-white">Open Positions</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {positions
-            .filter((position) => {
-              const hasActiveUnits =
-                (position.long?.units !== "0" &&
-                  position.long?.units !== "0") ||
-                (position.short?.units !== "0" &&
-                  position.short?.units !== "0");
-              const hasPositivePL = parseFloat(position.pl) > 0;
-              return hasActiveUnits || hasPositivePL;
-            })
-            .map((position) => {
-              const longUnits = parseInt(position.long?.units || "0");
-              const shortUnits = parseInt(position.short?.units || "0");
-              const totalUnits = longUnits - shortUnits;
-              const pl = parseFloat(position.pl);
-              const unrealizedPL = parseFloat(position.unrealizedPL || "0");
-
-              return (
-                <div
-                  key={position.instrument}
-                  className="p-4 border border-gray-700 rounded bg-gray-800 shadow-sm"
-                >
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h4 className="font-bold text-white">
-                        {position.instrument}
-                      </h4>
-                      <p
-                        className={`text-sm ${
-                          totalUnits !== 0 ? "text-green-400" : "text-gray-400"
-                        }`}
-                      >
-                        Units: {totalUnits}
-                      </p>
-                      <p
-                        className={`text-sm ${
-                          pl > 0 ? "text-green-400" : "text-red-400"
-                        }`}
-                      >
-                        P/L: {pl.toFixed(4)}
-                      </p>
-                      {unrealizedPL !== 0 && (
-                        <p
-                          className={`text-sm ${
-                            unrealizedPL > 0 ? "text-green-400" : "text-red-400"
-                          }`}
-                        >
-                          Unrealized P/L: {unrealizedPL.toFixed(4)}
-                        </p>
-                      )}
-                      {position.marginUsed && (
-                        <p className="text-sm text-gray-400">
-                          Margin Used:{" "}
-                          {parseFloat(position.marginUsed).toFixed(4)}
-                        </p>
-                      )}
-                    </div>
-                    {totalUnits !== 0 && (
-                      <button
-                        onClick={() => handleClosePosition(position.instrument)}
-                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors shadow-sm"
-                      >
-                        Close
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          {positions.filter((p) => {
-            const hasActiveUnits =
-              (p.long?.units !== "0" && p.long?.units !== "0") ||
-              (p.short?.units !== "0" && p.short?.units !== "0");
-            const hasPositivePL = parseFloat(p.pl) > 0;
-            return hasActiveUnits || hasPositivePL;
-          }).length === 0 && (
-            <div className="col-span-2 p-4 border border-gray-700 rounded bg-gray-800 shadow-sm text-center text-gray-400">
-              No active positions or positive P/L positions
-            </div>
-          )}
-        </div>
-      </div>
+      <TerminalSection />
     </div>
   );
 }

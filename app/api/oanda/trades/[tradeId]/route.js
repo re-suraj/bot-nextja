@@ -1,34 +1,34 @@
-import { NextResponse } from "next/server";
-import { oandaPut } from "@/app/lib/oanda";
-
-const ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
+import { OANDA_API_KEY, OANDA_ACCOUNT_ID, OANDA_API_URL } from "@/app/config/env";
 
 export async function DELETE(request, { params }) {
-  const { tradeId } = params;
-
   try {
-    // Close the trade using OANDA's API
-    const response = await oandaPut(
-      `/v3/accounts/${ACCOUNT_ID}/trades/${tradeId}/close`,
+    const { tradeId } = params;
+    
+    const response = await fetch(
+      `${OANDA_API_URL}/v3/accounts/${OANDA_ACCOUNT_ID}/trades/${tradeId}/close`,
       {
-        units: "ALL"
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${OANDA_API_KEY}`,
+          "Content-Type": "application/json",
+        },
       }
     );
 
     if (!response.ok) {
-      const error = await response.json();
-      return NextResponse.json(
-        { error: error.message || "Failed to close trade" },
+      const errorData = await response.json();
+      return Response.json(
+        { error: errorData.errorMessage || "Failed to close trade" },
         { status: response.status }
       );
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    return Response.json(data);
   } catch (error) {
     console.error("Error closing trade:", error);
-    return NextResponse.json(
-      { error: "Failed to close trade" },
+    return Response.json(
+      { error: error.message || "Internal server error" },
       { status: 500 }
     );
   }
