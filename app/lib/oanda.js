@@ -3,37 +3,14 @@
 // const ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
 // const API_KEY = process.env.OANDA_API_KEY;
 
-const OANDA_API_URL = "https://api-fxpractice.oanda.com";
-// NEXT_PUBLIC_OANDA_ACCOUNT_ID="101-001-31701945-001"
-const ACCOUNT_ID = "101-001-31701945-001";
-const API_KEY =
-  "c87de240064f6d839211a8bb9fb46354-301353f03ea7363dff1216b24aaa652d";
-// Validate environment variables
-function validateEnv() {
-  const missingVars = [];
-
-  if (!API_KEY) {
-    missingVars.push("OANDA_API_KEY");
-  }
-
-  if (!ACCOUNT_ID) {
-    missingVars.push("OANDA_ACCOUNT_ID");
-  }
-
-  if (missingVars.length > 0) {
-    console.error(
-      "Missing required environment variables:",
-      missingVars.join(", ")
-    );
-    console.error("Please set these variables in your .env.local file");
-    return false;
-  }
-
-  return true;
-}
+import { OANDA_API_URL, OANDA_ACCOUNT_ID, OANDA_API_KEY, isEnvValid } from '../config/env';
 
 // Validate on module load
-const isEnvValid = validateEnv();
+if (!isEnvValid) {
+  throw new Error(
+    "OANDA API configuration is invalid. Please check your environment variables."
+  );
+}
 
 /**
  * Make a GET request to the OANDA API
@@ -41,16 +18,10 @@ const isEnvValid = validateEnv();
  * @returns {Promise<any>} - API response data
  */
 export async function oandaGet(endpoint) {
-  if (!isEnvValid) {
-    throw new Error(
-      "OANDA API configuration is invalid. Please check your environment variables."
-    );
-  }
-
   try {
     const response = await fetch(`${OANDA_API_URL}${endpoint}`, {
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: `Bearer ${OANDA_API_KEY}`,
         "Content-Type": "application/json",
       },
     });
@@ -74,17 +45,11 @@ export async function oandaGet(endpoint) {
  * @returns {Promise<any>} - API response data
  */
 export async function oandaPost(endpoint, data) {
-  if (!isEnvValid) {
-    throw new Error(
-      "OANDA API configuration is invalid. Please check your environment variables."
-    );
-  }
-
   try {
     const response = await fetch(`${OANDA_API_URL}${endpoint}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: `Bearer ${OANDA_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(data),
@@ -109,17 +74,11 @@ export async function oandaPost(endpoint, data) {
  * @returns {Promise<any>} - API response data
  */
 export async function oandaPut(endpoint, data) {
-  if (!isEnvValid) {
-    throw new Error(
-      "OANDA API configuration is invalid. Please check your environment variables."
-    );
-  }
-
   try {
     const response = await fetch(`${OANDA_API_URL}${endpoint}`, {
       method: "PUT",
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: `Bearer ${OANDA_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(data),
@@ -143,17 +102,11 @@ export async function oandaPut(endpoint, data) {
  * @returns {Promise<any>} - API response data
  */
 export async function oandaDelete(endpoint) {
-  if (!isEnvValid) {
-    throw new Error(
-      "OANDA API configuration is invalid. Please check your environment variables."
-    );
-  }
-
   try {
     const response = await fetch(`${OANDA_API_URL}${endpoint}`, {
       method: "DELETE",
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: `Bearer ${OANDA_API_KEY}`,
         "Content-Type": "application/json",
       },
     });
@@ -170,4 +123,4 @@ export async function oandaDelete(endpoint) {
   }
 }
 
-export { ACCOUNT_ID };
+export { OANDA_ACCOUNT_ID as ACCOUNT_ID };

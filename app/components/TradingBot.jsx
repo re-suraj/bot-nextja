@@ -14,6 +14,7 @@ import {
 import { backtester } from "../lib/backtest";
 import TradingTerminal from "./TradingTerminal";
 import BacktestResults from "./BacktestResults";
+import { INSTRUMENTS } from '../config/instruments';
 
 export default function TradingBot() {
   const [isRunning, setIsRunning] = useState(false);
@@ -80,20 +81,6 @@ export default function TradingBot() {
 
     const monitorMarket = async () => {
       try {
-        const instruments = [
-          "USD_JPY",
-          "USD_CAD",
-          "USD_CHF",
-          "NZD_USD",
-          "EUR_GBP",
-          "EUR_JPY",
-          "GBP_JPY",
-          "AUD_JPY",
-          "GBP_AUD",
-          "USD_SGD",
-          "USD_HKD",
-          "USD_MXN",
-        ];
         let hasValidPrices = false;
         let failedInstruments = [];
 
@@ -106,7 +93,7 @@ export default function TradingBot() {
               .join(", ")
         );
 
-        for (const instrument of instruments) {
+        for (const instrument of INSTRUMENTS) {
           try {
             const candles = await getCandles(instrument, "M5", 100);
 
@@ -181,10 +168,7 @@ export default function TradingBot() {
         window.addMarketLog("\n=== Market Analysis Complete ===");
         marketUpdateTimeout = setTimeout(monitorMarket, MARKET_UPDATE_INTERVAL);
       } catch (error) {
-        window.addMarketLog(
-          `Error in market monitoring: ${error.message}`,
-          "error"
-        );
+        console.error("Market monitoring error:", error);
         if (error.message.includes("429")) {
           window.addMarketLog(
             "Rate limit hit, backing off market updates",

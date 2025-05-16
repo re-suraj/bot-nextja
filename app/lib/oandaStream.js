@@ -1,22 +1,6 @@
 import https from "https";
-
-const ACCOUNT_ID = "101-001-31701945-001";
-const ACCESS_TOKEN =
-  "c87de240064f6d839211a8bb9fb46354-301353f03ea7363dff1216b24aaa652d";
-const INSTRUMENTS = [
-  "USD_JPY",
-  "USD_CAD",
-  "USD_CHF",
-  "NZD_USD",
-  "EUR_GBP",
-  "EUR_JPY",
-  "GBP_JPY",
-  "AUD_JPY",
-  "GBP_AUD",
-  "USD_SGD",
-  "USD_HKD",
-  "USD_MXN",
-];
+import { OANDA_ACCOUNT_ID, OANDA_API_KEY } from '../config/env';
+import { INSTRUMENTS } from '../config/instruments';
 
 let currentCandle = {};
 let candles = {};
@@ -75,12 +59,12 @@ function startStream() {
 
   const options = {
     hostname: "stream-fxpractice.oanda.com",
-    path: `/v3/accounts/${ACCOUNT_ID}/pricing/stream?instruments=${INSTRUMENTS.join(
+    path: `/v3/accounts/${OANDA_ACCOUNT_ID}/pricing/stream?instruments=${INSTRUMENTS.join(
       ","
     )}`,
     method: "GET",
     headers: {
-      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      Authorization: `Bearer ${OANDA_API_KEY}`,
     },
   };
 

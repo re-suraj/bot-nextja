@@ -1,39 +1,17 @@
 import { SMA, RSI, MACD, BollingerBands } from "technicalindicators";
+import { OANDA_API_KEY, OANDA_ACCOUNT_ID, OANDA_API_URL } from "../config/env";
+import { INSTRUMENTS, TRADING_PARAMS } from "../config/instruments";
 
-const API_KEY =
-  "c87de240064f6d839211a8bb9fb46354-301353f03ea7363dff1216b24aaa652d";
-const ACCOUNT_ID = "101-001-31701945-001";
-const BASE_URL = "https://api-fxpractice.oanda.com/v3";
-
-// const INSTRUMENTS = ['EUR_USD', 'GBP_USD', 'AUD_USD', 'EUR_CAD', 'EUR_AUD'];
-const INSTRUMENTS = [
-  // Core majors
-  // "EUR_USD",
-  // "GBP_USD",
-  "USD_JPY",
-  // "AUD_USD",
-  // Extras
-  "USD_CAD",
-  "USD_CHF",
-  "NZD_USD", // Other majors
-  "EUR_GBP",
-  "EUR_JPY",
-  "GBP_JPY", // Popular crosses
-  "AUD_JPY",
-  // "EUR_AUD",
-  "GBP_AUD", // AUD crosses
-  "USD_SGD",
-  "USD_HKD",
-  "USD_MXN",
-];
-const STOP_LOSS_PIPS = 50;
-const TAKE_PROFIT_PIPS = 40;
-const RISK_PERCENT = 0.02;
-const MIN_RSI_DIFF = 5;
-const MIN_MA_DIFF = 0.0002;
-const TREND_STRENGTH_THRESHOLD = 0.0001;
-const MAX_DAILY_TRADES = 5;
-const MAX_OPEN_POSITIONS = 3;
+const {
+  STOP_LOSS_PIPS,
+  TAKE_PROFIT_PIPS,
+  RISK_PERCENT,
+  MIN_RSI_DIFF,
+  MIN_MA_DIFF,
+  TREND_STRENGTH_THRESHOLD,
+  MAX_DAILY_TRADES,
+  MAX_OPEN_POSITIONS,
+} = TRADING_PARAMS;
 
 // Track daily performance and trade cooldowns
 let dailyStats = {
@@ -48,7 +26,7 @@ let lastTradeTime = {}; // Cooldown tracking
 let errorNumber = 0;
 
 const headers = {
-  Authorization: `Bearer ${API_KEY}`,
+  Authorization: `Bearer ${OANDA_API_KEY}`,
   "Content-Type": "application/json",
 };
 
@@ -67,7 +45,7 @@ function canTrade(instrument) {
 async function getCandles(instrument) {
   try {
     const response = await fetch(
-      `${BASE_URL}/instruments/${instrument}/candles?granularity=M5&count=100&price=M`,
+      `${OANDA_API_URL}/instruments/${instrument}/candles?granularity=M5&count=100&price=M`,
       {
         headers,
       }
@@ -106,7 +84,7 @@ async function getCandles(instrument) {
 
 async function getAccountDetails() {
   try {
-    const response = await fetch(`${BASE_URL}/accounts/${ACCOUNT_ID}`, {
+    const response = await fetch(`${OANDA_API_URL}/accounts`, {
       headers,
     });
     const data = await response.json();
@@ -120,10 +98,10 @@ async function getAccountDetails() {
 
 async function getOpenTrades() {
   try {
-    const response = await fetch(
-      `${BASE_URL}/accounts/${ACCOUNT_ID}/openTrades`,
-      { headers }
-    );
+    const response = await fetch("/api/oanda/trades/open");
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
     const data = await response.json();
     return data.trades;
   } catch (error) {
@@ -159,11 +137,14 @@ async function createOrder(direction, price, units, instrument) {
       },
     };
 
-    const response = await fetch(`${BASE_URL}/accounts/${ACCOUNT_ID}/orders`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(order),
-    });
+    const response = await fetch(
+      `${OANDA_API_URL}/accounts/${OANDA_ACCOUNT_ID}/orders`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(order),
+      }
+    );
 
     const data = await response.json();
     window.addMarketLog(
@@ -343,7 +324,7 @@ async function runStrategy(instrument) {
 async function getCurrentPrice(instrument) {
   try {
     const response = await fetch(
-      `${BASE_URL}/accounts/${ACCOUNT_ID}/pricing?instruments=${instrument}`,
+      `${OANDA_API_URL}/accounts/${OANDA_ACCOUNT_ID}/pricing?instruments=${instrument}`,
       {
         headers,
       }
@@ -364,7 +345,7 @@ async function getCurrentPrice(instrument) {
 async function closeTrade(tradeID) {
   try {
     const response = await fetch(
-      `${BASE_URL}/accounts/${ACCOUNT_ID}/trades/${tradeID}/close`,
+      `${OANDA_API_URL}/accounts/${OANDA_ACCOUNT_ID}/trades/${tradeID}/close`,
       {
         method: "PUT",
         headers,

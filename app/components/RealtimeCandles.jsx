@@ -1,33 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
+import { OANDA_ACCOUNT_ID, OANDA_API_KEY } from '../config/env';
+import { INSTRUMENTS, DEFAULT_INSTRUMENT } from '../config/instruments';
 // import WebSocket, { WebSocketServer } from "ws";
 
 const ACCOUNT_ID = "101-001-31701945-001";
 const ACCESS_TOKEN =
   "c87de240064f6d839211a8bb9fb46354-301353f03ea7363dff1216b24aaa652d";
 
-const INSTRUMENTS = [
-  // Core majors
-  // "EUR_USD",
-  // "GBP_USD",
-  "USD_JPY",
-  // "AUD_USD",
-  // Extras
-  "USD_CAD",
-  "USD_CHF",
-  "NZD_USD", // Other majors
-  "EUR_GBP",
-  "EUR_JPY",
-  "GBP_JPY", // Popular crosses
-  "AUD_JPY",
-  // "EUR_AUD",
-  "GBP_AUD", // AUD crosses
-  "USD_SGD",
-  "USD_HKD",
-  "USD_MXN",
-];
-
-export default function RealtimeCandles({ instrument = "USD_JPY" }) {
+export default function RealtimeCandles({ instrument = DEFAULT_INSTRUMENT }) {
   const chartContainerRef = useRef();
   const [candles, setCandles] = useState([]);
 
