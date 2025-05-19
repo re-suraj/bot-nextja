@@ -1,6 +1,7 @@
 import axios from "axios";
 
-export default async function handler(req, res) {
+export async function POST(req, res) {
+  // export default async function POST(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST requests are allowed" });
   }

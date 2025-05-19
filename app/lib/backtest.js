@@ -20,24 +20,74 @@ class Backtester {
 
   async runBacktests() {
     const instruments = [
-      // Core majors
-      // "EUR_USD",
-      // "GBP_USD",
+      "EUR_USD",
+      "AUD_USD",
+      "GBP_USD",
       "USD_JPY",
-      // "AUD_USD",
-      // Extras
+      "EUR_JPY",
+      "AUD_CAD",
+      "AUD_CHF",
+      "AUD_HKD",
+      "AUD_JPY",
+      "AUD_NZD",
+      "AUD_SGD",
+      "CAD_CHF",
+      "CAD_HKD",
+      "CAD_JPY",
+      "CAD_SGD",
+      "CHF_HKD",
+      "CHF_JPY",
+      "CHF_ZAR",
+      "EUR_AUD",
+      "EUR_CAD",
+      "EUR_CHF",
+      "EUR_CZK",
+      "EUR_DKK",
+      "EUR_GBP",
+      "EUR_HKD",
+      "EUR_HUF",
+      "EUR_NOK",
+      "EUR_NZD",
+      "EUR_PLN",
+      "EUR_SEK",
+      "EUR_SGD",
+      "EUR_TRY",
+      "EUR_ZAR",
+      "GBP_AUD",
+      "GBP_CAD",
+      "GBP_CHF",
+      "GBP_HKD",
+      "GBP_JPY",
+      "GBP_NZD",
+      "GBP_PLN",
+      "GBP_SGD",
+      "GBP_ZAR",
+      "HKD_JPY",
+      "NZD_CAD",
+      "NZD_CHF",
+      "NZD_HKD",
+      "NZD_JPY",
+      "NZD_SGD",
+      "NZD_USD",
+      "SGD_CHF",
+      "SGD_JPY",
+      "TRY_JPY",
       "USD_CAD",
       "USD_CHF",
-      "NZD_USD", // Other majors
-      "EUR_GBP",
-      "EUR_JPY",
-      "GBP_JPY", // Popular crosses
-      "AUD_JPY",
-      // "EUR_AUD",
-      "GBP_AUD", // AUD crosses
-      "USD_SGD",
+      "USD_CNH",
+      "USD_CZK",
+      "USD_DKK",
       "USD_HKD",
+      "USD_HUF",
       "USD_MXN",
+      "USD_NOK",
+      "USD_PLN",
+      "USD_SEK",
+      "USD_SGD",
+      "USD_THB",
+      "USD_TRY",
+      "USD_ZAR",
+      "ZAR_JPY",
     ];
     const results = {};
 
@@ -271,7 +321,7 @@ class Backtester {
   async runStrategyOnData(instrument, candles, strategies) {
     try {
       const prices = candles.map((c) => parseFloat(c.mid.c));
-      
+
       // Calculate indicators for each strategy
       const indicators = {};
       for (const strategy of strategies) {
@@ -317,7 +367,7 @@ class Backtester {
 
       // Start from the point where all indicators are available
       const startIndex = Math.abs(maxOffset);
-      
+
       if (startIndex >= prices.length) {
         throw new Error("Not enough data points for indicator calculations");
       }
@@ -370,11 +420,16 @@ class Backtester {
 
             // Skip if we don't have enough data for all indicators
             if (
-              shortMAIndex < 0 || shortMAIndex >= ind.shortMA.length ||
-              longMAIndex < 0 || longMAIndex >= ind.longMA.length ||
-              rsiIndex < 0 || rsiIndex >= ind.rsi.length ||
-              macdIndex < 0 || macdIndex >= ind.macd.length ||
-              bbIndex < 0 || bbIndex >= ind.bb.length
+              shortMAIndex < 0 ||
+              shortMAIndex >= ind.shortMA.length ||
+              longMAIndex < 0 ||
+              longMAIndex >= ind.longMA.length ||
+              rsiIndex < 0 ||
+              rsiIndex >= ind.rsi.length ||
+              macdIndex < 0 ||
+              macdIndex >= ind.macd.length ||
+              bbIndex < 0 ||
+              bbIndex >= ind.bb.length
             ) {
               continue;
             }
@@ -390,14 +445,18 @@ class Backtester {
             };
 
             if (this.shouldEnterLong(currentIndicators, params, curr)) {
-              const units = this.calculatePositionSize(params.riskPerTrade || 0.02);
+              const units = this.calculatePositionSize(
+                params.riskPerTrade || 0.02
+              );
               this.openPosition(instrument, "buy", currentPrice, units, {
                 stopLoss: currentPrice * (1 - (params.stopLoss || 0.01)),
                 takeProfit: currentPrice * (1 + (params.takeProfit || 0.02)),
               });
               break;
             } else if (this.shouldEnterShort(currentIndicators, params, curr)) {
-              const units = this.calculatePositionSize(params.riskPerTrade || 0.02);
+              const units = this.calculatePositionSize(
+                params.riskPerTrade || 0.02
+              );
               this.openPosition(instrument, "sell", currentPrice, units, {
                 stopLoss: currentPrice * (1 + (params.stopLoss || 0.01)),
                 takeProfit: currentPrice * (1 - (params.takeProfit || 0.02)),

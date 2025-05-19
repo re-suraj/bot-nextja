@@ -1,16 +1,16 @@
-import { NextResponse } from "next/server";
 import { subscribeToLogs } from "@/app/lib/serverBot";
 
 export async function GET() {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
+      console.log("Starting log subscription...");
       const unsubscribe = subscribeToLogs((log) => {
+        console.log("Received log:", log);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(log)}\n\n`));
       });
-
-      // Clean up subscription when the connection is closed
       return () => {
+        console.log("Unsubscribing from logs...");
         unsubscribe();
       };
     },
@@ -20,7 +20,7 @@ export async function GET() {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+      Connection: "keep-alive",
     },
   });
-} 
+}

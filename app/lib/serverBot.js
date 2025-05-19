@@ -559,13 +559,19 @@ async function runStrategy(instrument) {
         period: STRATEGY_PARAMS.fastEMA,
         values: prices,
       });
-      emitLog(`[DEBUG] ${instrument} - Fast EMA length: ${fastEMA.length}`, "info");
+      emitLog(
+        `[DEBUG] ${instrument} - Fast EMA length: ${fastEMA.length}`,
+        "info"
+      );
 
       slowEMA = EMA.calculate({
         period: STRATEGY_PARAMS.slowEMA,
         values: prices,
       });
-      emitLog(`[DEBUG] ${instrument} - Slow EMA length: ${slowEMA.length}`, "info");
+      emitLog(
+        `[DEBUG] ${instrument} - Slow EMA length: ${slowEMA.length}`,
+        "info"
+      );
 
       // Calculate RSI
       rsi = RSI.calculate({
@@ -602,10 +608,17 @@ async function runStrategy(instrument) {
       }
 
       // Ensure we have enough data points
-      if (fastEMA.length < 2 || slowEMA.length < 2 || rsi.length < 2 || adx.length < 1 || atr.length < 1) {
-        throw new Error(`Insufficient data points - Fast EMA: ${fastEMA.length}, Slow EMA: ${slowEMA.length}, RSI: ${rsi.length}, ADX: ${adx.length}, ATR: ${atr.length}`);
+      if (
+        fastEMA.length < 2 ||
+        slowEMA.length < 2 ||
+        rsi.length < 2 ||
+        adx.length < 1 ||
+        atr.length < 1
+      ) {
+        throw new Error(
+          `Insufficient data points - Fast EMA: ${fastEMA.length}, Slow EMA: ${slowEMA.length}, RSI: ${rsi.length}, ADX: ${adx.length}, ATR: ${atr.length}`
+        );
       }
-
     } catch (error) {
       emitLog(`[INDICATOR ERROR] ${instrument}: ${error.message}`, "error");
       return;
@@ -635,16 +648,28 @@ async function runStrategy(instrument) {
 
     // Log indicator values for debugging
     emitLog(
-      `[DEBUG] ${instrument} - Fast EMA: ${fastEMA_curr?.toFixed(5)} | Slow EMA: ${slowEMA_curr?.toFixed(5)} | RSI: ${rsi_curr?.toFixed(2)} | ADX: ${adx_curr?.toFixed(2)} | ATR: ${atr_curr?.toFixed(5)}`,
+      `[DEBUG] ${instrument} - Fast EMA: ${fastEMA_curr?.toFixed(
+        5
+      )} | Slow EMA: ${slowEMA_curr?.toFixed(5)} | RSI: ${rsi_curr?.toFixed(
+        2
+      )} | ADX: ${adx_curr?.toFixed(2)} | ATR: ${atr_curr?.toFixed(5)}`,
       "info"
     );
 
     // Validate indicator values
-    if (typeof fastEMA_curr !== 'number' || typeof fastEMA_prev !== 'number' ||
-        typeof slowEMA_curr !== 'number' || typeof slowEMA_prev !== 'number' ||
-        typeof rsi_curr !== 'number' || typeof adx_curr !== 'number' ||
-        typeof atr_curr !== 'number') {
-      emitLog(`[INDICATOR ERROR] ${instrument}: Invalid indicator values - Fast EMA: ${typeof fastEMA_curr}, Slow EMA: ${typeof slowEMA_curr}, RSI: ${typeof rsi_curr}, ADX: ${typeof adx_curr}, ATR: ${typeof atr_curr}`, "error");
+    if (
+      typeof fastEMA_curr !== "number" ||
+      typeof fastEMA_prev !== "number" ||
+      typeof slowEMA_curr !== "number" ||
+      typeof slowEMA_prev !== "number" ||
+      typeof rsi_curr !== "number" ||
+      typeof adx_curr !== "number" ||
+      typeof atr_curr !== "number"
+    ) {
+      emitLog(
+        `[INDICATOR ERROR] ${instrument}: Invalid indicator values - Fast EMA: ${typeof fastEMA_curr}, Slow EMA: ${typeof slowEMA_curr}, RSI: ${typeof rsi_curr}, ADX: ${typeof adx_curr}, ATR: ${typeof atr_curr}`,
+        "error"
+      );
       return;
     }
 
@@ -668,7 +693,11 @@ async function runStrategy(instrument) {
 
     // Log market conditions
     emitLog(
-      `[MARKET] ${instrument} - RSI: ${rsi_curr.toFixed(2)} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(5)} | Spread: ${spread.toFixed(5)}`,
+      `[MARKET] ${instrument} - RSI: ${rsi_curr.toFixed(
+        2
+      )} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(
+        5
+      )} | Spread: ${spread.toFixed(5)}`,
       "info"
     );
 
@@ -687,13 +716,17 @@ async function runStrategy(instrument) {
 
     if (isStrongTrend && isEMACrossover && isRSIValid) {
       emitLog(
-        `[BUY SIGNAL] ${instrument} - RSI: ${rsi_curr.toFixed(2)} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(5)}`,
+        `[BUY SIGNAL] ${instrument} - RSI: ${rsi_curr.toFixed(
+          2
+        )} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(5)}`,
         "success"
       );
 
       // Calculate stop loss and take profit prices
       const stopLossPrice = (currentPrice.ask - stopLossDistance).toFixed(5);
-      const takeProfitPrice = (currentPrice.ask + takeProfitDistance).toFixed(5);
+      const takeProfitPrice = (currentPrice.ask + takeProfitDistance).toFixed(
+        5
+      );
 
       // Create order with ATR-based stops
       await trading.createOrder("buy", currentPrice.ask, units, instrument, {
@@ -702,7 +735,9 @@ async function runStrategy(instrument) {
       });
     } else {
       emitLog(
-        `[NO TRADE] ${instrument} - RSI: ${rsi_curr.toFixed(2)} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(5)}`,
+        `[NO TRADE] ${instrument} - RSI: ${rsi_curr.toFixed(
+          2
+        )} | ADX: ${adx_curr.toFixed(2)} | ATR: ${atr_curr.toFixed(5)}`,
         "info"
       );
     }
