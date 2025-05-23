@@ -1,3 +1,5 @@
+// - background/pathSimulatorWorker.js
+
 import { parentPort, workerData } from "worker_threads";
 import { simulateTriangularPath } from "../lib/binanceUtils.js";
 
